@@ -1,6 +1,18 @@
 # Kinky Notes
 
-Kinky Notes (ранее A-notes) — локальное приложение для macOS. Записывает микрофон и системный звук, распознаёт речь через WhisperKit и сохраняет встречи с транскриптом и итогом. Для передачи подготовлен один DMG с готовым приложением, исходниками, тестами и инструкциями.
+**A local-first meeting recorder and AI notetaker for macOS, with Markdown notes you can open in Obsidian.**
+
+Hey! This is my first project on GitHub, and I’m still building it. I started Kinky Notes because I wanted the convenience of Granola with one thing I cared a lot about: a meeting could go from audio to transcript to notes entirely on my Mac.
+
+Kinky Notes records your microphone and system audio without sending a bot into the call. WhisperKit transcribes on-device, and you can use a local Ollama model to write a summary. With that setup, the recording, transcript, and summary stay on your Mac. Your notes are plain Markdown files you can open and edit in Obsidian.
+
+## Try the beta
+
+[Download the early beta](https://github.com/nsmerkantil-web/kinky-notes/releases/tag/v1.0.0-local-beta) for Apple Silicon Macs running macOS 15 or later. The current download still carries the old name, A-notes. The release page explains how to join the two download parts and verify the checksum. The beta uses a local signature, so macOS Gatekeeper may block it.
+
+I’ll share updates here as I go, including what’s working, what’s still rough, and what I’m learning along the way. If you try it, I’d love to hear what happened. A bug report, an idea, or even a quick “it worked on my Mac” would mean a lot. [Leave feedback on GitHub](https://github.com/nsmerkantil-web/kinky-notes/issues).
+
+Thanks for giving my first project a little of your time. Made with love. ❤️
 
 ## Установка из архива
 
