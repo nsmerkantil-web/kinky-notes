@@ -25,7 +25,7 @@ if [[ ${PACKAGE_HANDOFF:-0} == 1 ]]; then
   cp README.md AGENTS.md CODEX_START_PROMPT.md "$PAYLOAD/"
   cp README.md AGENTS.md CODEX_START_PROMPT.md Package.swift Package.resolved .gitignore "$PROJECT/"
   cp -R Sources Tests scripts "$PROJECT/"
-  cp assets/branding/a-notes-logo.png assets/branding/README.md "$PROJECT/assets/branding/"
+  cp assets/branding/{kinky-notes-app-icon.png,favicon.png,README.md} "$PROJECT/assets/branding/"
   cp -R assets/audit "$PROJECT/assets/"
   cp docs/GETTING_STARTED.md docs/CODEX_SETUP.md docs/OBSIDIAN_STORAGE.md docs/WHISPER_LICENSE.txt "$PROJECT/docs/"
   ln -s Project/docs "$PAYLOAD/docs"
