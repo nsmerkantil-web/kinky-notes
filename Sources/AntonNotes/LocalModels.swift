@@ -37,9 +37,13 @@ struct LocalModelConnection: Codable, Equatable {
     }
 
     var credentialAccount: String { provider.rawValue + ":" + ((try? endpoint(""))?.absoluteString ?? baseURL) }
-    var locationDescription: String {
+    var isLoopback: Bool {
         let host = URLComponents(string: baseURL)?.host?.lowercased() ?? ""
         return ["localhost", "127.0.0.1", "[::1]", "::1"].contains(host)
+    }
+
+    var locationDescription: String {
+        isLoopback
             ? "Сервер на этом Mac. Выбирайте локальную модель для обработки без облака."
             : "Текст будет отправлен на указанный сервер."
     }

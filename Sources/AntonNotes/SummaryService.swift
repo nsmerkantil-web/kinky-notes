@@ -84,7 +84,7 @@ enum SummaryService {
         return title
     }
     static func isPlaceholderTitle(_ title: String) -> Bool {
-        title.hasPrefix("Встреча ")
+        InterfaceLanguage.allCases.contains { title.hasPrefix($0.meetingTitlePrefix) }
     }
     static func generateTitle(model: String, connection: LocalModelConnection = .default(for: .ollama), summary: String, session: URLSession = .shared) async throws -> String? {
         var selected = connection

@@ -6,6 +6,12 @@ struct FolderDraft: Identifiable {
 }
 
 struct FolderEditor: View {
+    @Environment(\.locale) private var locale
+
+    private func l(_ source: String) -> String {
+        (InterfaceLanguage(rawValue: locale.identifier) ?? .russian).text(source)
+    }
+
     let original: String?
     let save: (String) -> String?
     @Environment(\.dismiss) private var dismiss
@@ -21,20 +27,20 @@ struct FolderEditor: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 20) {
-            Text(original == nil ? "Создать папку" : "Переименовать папку").font(.system(size: 22, weight: .semibold))
+            Text(original == nil ? l("Создать папку") : l("Переименовать папку")).font(.system(size: 22, weight: .semibold))
             VStack(alignment: .leading, spacing: 8) {
-                Text("Название папки")
-                TextField("Например, Работа", text: $name)
+                Text(l("Название папки"))
+                TextField(l("Например, Работа"), text: $name)
                     .textFieldStyle(.roundedBorder).controlSize(.large)
-                    .accessibilityIdentifier("folder-name").accessibilityLabel("Название папки")
+                    .accessibilityIdentifier("folder-name").accessibilityLabel(l("Название папки"))
                     .focused($nameFocused)
                     .onSubmit { submit() }
                 if let error { Text(error).font(.callout).foregroundStyle(.red).accessibilityIdentifier("folder-error") }
             }
             HStack {
                 Spacer()
-                Button("Отмена") { dismiss() }.buttonStyle(NoteButtonStyle()).keyboardShortcut(.cancelAction)
-                Button(original == nil ? "Создать" : "Сохранить") { submit() }.buttonStyle(NoteButtonStyle(selected: true)).keyboardShortcut(.defaultAction)
+                Button(l("Отмена")) { dismiss() }.buttonStyle(NoteButtonStyle()).keyboardShortcut(.cancelAction)
+                Button(original == nil ? l("Создать") : l("Сохранить")) { submit() }.buttonStyle(NoteButtonStyle(selected: true)).keyboardShortcut(.defaultAction)
                     .disabled(name.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
             }
         }

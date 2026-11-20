@@ -1,6 +1,12 @@
 import SwiftUI
 
 struct SummaryView: View {
+    @Environment(\.locale) private var locale
+
+    private func l(_ source: String) -> String {
+        (InterfaceLanguage(rawValue: locale.identifier) ?? .russian).text(source)
+    }
+
     @Binding var text: String
     @State private var editing = false
     @State private var draft = ""
@@ -10,12 +16,12 @@ struct SummaryView: View {
             HStack {
                 Spacer()
                 if editing {
-                    Button("Отмена") { editing = false }.buttonStyle(NoteButtonStyle())
-                    Button("Сохранить") { text = SummaryDocument.markdown(fromReadable: draft, preservingHeadingsFrom: text); editing = false }
+                    Button(l("Отмена")) { editing = false }.buttonStyle(NoteButtonStyle())
+                    Button(l("Сохранить")) { text = SummaryDocument.markdown(fromReadable: draft, preservingHeadingsFrom: text); editing = false }
                         .buttonStyle(NoteButtonStyle(selected: true))
                 } else {
                     Button { draft = SummaryDocument.plainText(text); editing = true } label: {
-                        Label("Редактировать", systemImage: "pencil")
+                        Label(l("Редактировать"), systemImage: "pencil")
                     }.buttonStyle(NoteButtonStyle())
                 }
             }
@@ -23,7 +29,7 @@ struct SummaryView: View {
                 TextEditor(text: $draft)
                     .font(.system(size: 16)).lineSpacing(5)
                     .scrollContentBackground(.hidden)
-                    .accessibilityLabel("Редактирование итога встречи")
+                    .accessibilityLabel(l("Редактирование итога встречи"))
             } else {
                 ScrollView {
                     VStack(alignment: .leading, spacing: 14) {
@@ -48,7 +54,7 @@ struct SummaryView: View {
                     }.frame(maxWidth: .infinity, alignment: .leading)
                         .padding(.trailing, 12).padding(.bottom, 20)
                         .textSelection(.enabled)
-                }.accessibilityLabel("Итог встречи")
+                }.accessibilityLabel(l("Итог встречи"))
             }
         }
     }

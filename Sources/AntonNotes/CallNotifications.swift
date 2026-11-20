@@ -8,7 +8,10 @@ final class CallNotifications: NSObject, UNUserNotificationCenterDelegate {
     private let center = UNUserNotificationCenter.current()
     func configure() {
         center.delegate = self
-        let action = UNNotificationAction(identifier: "take-notes", title: "Take notes", options: .foreground)
+    }
+    private func updateCallCategory(language: InterfaceLanguage) {
+        let action = UNNotificationAction(identifier: "take-notes",
+                                          title: language.text("Сделать заметку"), options: .foreground)
         center.setNotificationCategories([UNNotificationCategory(identifier: "call", actions: [action], intentIdentifiers: [])])
     }
     func show() async {
@@ -18,8 +21,10 @@ final class CallNotifications: NSObject, UNUserNotificationCenterDelegate {
                 return
             }
             let content = UNMutableNotificationContent()
-            content.title = "Call detected"
-            content.body = "Начать заметку и запись звонка?"
+            let language = InterfaceLanguage.selected
+            updateCallCategory(language: language)
+            content.title = language.text("Обнаружен звонок")
+            content.body = language.text("Начать заметку и запись звонка?")
             content.categoryIdentifier = "call"
             content.sound = .default
             try await center.add(UNNotificationRequest(identifier: "detected-call", content: content, trigger: nil))
@@ -41,8 +46,9 @@ final class CallNotifications: NSObject, UNUserNotificationCenterDelegate {
                 return
             }
             let content = UNMutableNotificationContent()
-            content.title = title
-            content.body = body
+            let language = InterfaceLanguage.selected
+            content.title = language.text(title)
+            content.body = language.text(body)
             content.sound = .default
             content.userInfo = ["meetingID": id.uuidString]
             try await center.add(UNNotificationRequest(identifier: "\(event)-\(id)", content: content, trigger: nil))

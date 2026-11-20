@@ -260,18 +260,22 @@ struct Meeting: Codable, Identifiable, Equatable {
             modelStatus = token.isEmpty ? "Токен удалён из Связки ключей" : "Токен сохранён в Связке ключей · проверьте связь"
         } catch { modelStatus = error.localizedDescription }
     }
-    func feedback(_ meeting: Meeting, now: Date) -> String {
+    func feedback(_ meeting: Meeting, now: Date, language: InterfaceLanguage) -> String {
         let job = meeting.job
         let duration = recordingID == meeting.id ? now.timeIntervalSince(meeting.date) : (job?.duration ?? 0)
-        var text = duration > 0 ? "Аудио \(Int(duration)/60):\(String(format: "%02d", Int(duration)%60))" : "Аудиозаписи нет"
+        var text = duration > 0
+            ? language.message("Аудио \(Int(duration) / 60):\(String(format: "%02d", Int(duration) % 60))")
+            : language.text("Аудиозаписи нет")
         let stage = job?.stage ?? "Нет обработки"
-        if stage != "Аудиозаписи нет" { text += " · " + stage }
-        if let captureError = job?.captureError { text += " · Запись прервана: " + captureError }
-        if let error = job?.error { text += " · " + error }
+        if stage != "Аудиозаписи нет" { text += " · " + language.message(stage) }
+        if let captureError = job?.captureError { text += " · " + language.message("Запись прервана: \(language.message(captureError))") }
+        if let error = job?.error { text += " · " + language.message(error) }
         if let estimate = job?.estimate, let start = job?.started, job?.pending == true, activeID == meeting.id {
             let left = estimate - now.timeIntervalSince(start)
-            text += left > 0 ? " · ≈ \(max(1, Int(ceil(left / 60)))) мин до готовности" : " · Дольше оценки, обработка продолжается"
-        } else if activeID == meeting.id { text += " · Оценка времени уточняется" }
+            text += " · " + (left > 0
+                ? language.message("≈ \(max(1, Int(ceil(left / 60)))) мин до готовности")
+                : language.text("Дольше оценки, обработка продолжается"))
+        } else if activeID == meeting.id { text += " · " + language.text("Оценка времени уточняется") }
         return text
     }
     func recoverUnfinishedMeetings() {
@@ -379,7 +383,7 @@ struct Meeting: Codable, Identifiable, Equatable {
             catch { status = "Запись удалена; не удалось переместить аудио в Корзину: \(error.localizedDescription)" }
         }
     }
-    func add(folder: String? = nil) { var m = Meeting(title: "Встреча \(Date().formatted(date: .abbreviated, time: .shortened))"); m.folder = folder.flatMap { folders.contains($0) ? $0 : nil } ?? NoteLibrary.inbox; meetings.insert(m, at: 0); selected = m.id; save() }
+    func add(folder: String? = nil) { var m = Meeting(title: InterfaceLanguage.selected.defaultMeetingTitle()); m.folder = folder.flatMap { folders.contains($0) ? $0 : nil } ?? NoteLibrary.inbox; meetings.insert(m, at: 0); selected = m.id; save() }
     func start(automatic: Bool = false) async {
         guard !recording && !starting && !stopping else { return }
         starting = true
@@ -392,7 +396,7 @@ struct Meeting: Codable, Identifiable, Equatable {
         do {
             let content = try await SCShareableContent.excludingDesktopWindows(false, onScreenWindowsOnly: true)
             guard let display = content.displays.first else { throw NSError(domain: "Capture", code: 1, userInfo: [NSLocalizedDescriptionKey: "Нет доступного дисплея"]) }
-            var meeting = Meeting(title: "Встреча \(Date().formatted(date: .abbreviated, time: .shortened))")
+            var meeting = Meeting(title: InterfaceLanguage.selected.defaultMeetingTitle())
             meeting.job = ProcessingJob(stage: "Запись")
             let directory = root.appendingPathComponent(meeting.id.uuidString)
             try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
@@ -456,7 +460,17 @@ struct Meeting: Codable, Identifiable, Equatable {
             await drainQueue()
         }
     }
-    func transcribe(meetingID: UUID? = nil) async {
+    func retryRecording(_ id: UUID) async {
+        guard !recording, !starting, !stopping, activeID != id,
+              let meeting = meetings.first(where: { $0.id == id }),
+              meeting.job?.pending != true, audioDuration(id) > 0 else { return }
+        if meeting.transcript.isEmpty || meeting.job?.retranscribe == true {
+            await transcribe(meetingID: id, restart: false)
+        } else {
+            await summarize(meetingID: id)
+        }
+    }
+    func transcribe(meetingID: UUID? = nil, restart: Bool = true) async {
         guard let id = meetingID ?? selected, activeID != id else { return }
         guard let i = meetings.firstIndex(where: { $0.id == id }) else { return }
         if meetings[i].job == nil { meetings[i].job = ProcessingJob(stage: "В очереди") }
@@ -465,7 +479,9 @@ struct Meeting: Codable, Identifiable, Equatable {
         meetings[i].job?.retranscribe = true
         if persistModelSettings { localModels = LocalModelSettings.load() }
         meetings[i].job?.connection = connection
-        try? FileManager.default.removeItem(at: root.appendingPathComponent(id.uuidString).appendingPathComponent("transcription-checkpoint.json"))
+        if restart {
+            try? FileManager.default.removeItem(at: root.appendingPathComponent(id.uuidString).appendingPathComponent("transcription-checkpoint.json"))
+        }
         queue.append(id)
         updateJob(id, stage: sleeping ? "Пауза · Mac спит" : "В очереди")
         await drainQueue()
@@ -554,7 +570,12 @@ struct Meeting: Codable, Identifiable, Equatable {
                     }
                 }
             }
-            guard !lines.isEmpty else { status = "Нет аудио или распознанной речи"; updateJob(id, stage: "Речь не обнаружена"); return }
+            guard !lines.isEmpty else {
+                try? FileManager.default.removeItem(at: checkpointURL)
+                status = "Нет аудио или распознанной речи"
+                updateJob(id, stage: "Речь не обнаружена")
+                return
+            }
             if let index = meetings.firstIndex(where: {$0.id == id}) {
                 try Task.checkCancellation()
                 meetings[index].job?.retranscribe = false
@@ -703,14 +724,20 @@ struct ContentView: View {
     @State private var detail = false
     @State private var settings = false
     @State private var modelToken = ""
+    @State private var summarySettingsExpanded = false
+    @State private var integrationsExpanded = false
+    @State private var showModelStatus = false
     @State private var tab = "Итог"
+    @AppStorage(InterfaceLanguage.preferenceKey) private var language: InterfaceLanguage = .russian
+    private func l(_ source: String) -> String { language.text(source) }
+
     @AppStorage("darkAppearance") private var darkAppearance = false
     private var filtered: [Meeting] { store.meetings.filter { (folder == nil || $0.folder == folder) && (query.isEmpty || ($0.title + $0.notes + $0.transcript + $0.summary).localizedCaseInsensitiveContains(query)) }.sorted {$0.date > $1.date} }
     private var days: [Date] { Array(Set(filtered.map {Calendar.current.startOfDay(for:$0.date)})).sorted(by: >) }
     private func dayName(_ date: Date) -> String {
-        if Calendar.current.isDateInToday(date) { return "Сегодня" }
-        if Calendar.current.isDateInYesterday(date) { return "Вчера" }
-        return date.formatted(.dateTime.weekday(.abbreviated).day().month(.abbreviated))
+        if Calendar.current.isDateInToday(date) { return l("Сегодня") }
+        if Calendar.current.isDateInYesterday(date) { return l("Вчера") }
+        return date.formatted(.dateTime.weekday(.abbreviated).day().month(.abbreviated).locale(language.locale))
     }
     @FocusState private var searchFocused: Bool
     @State private var sidebarVisible = true
@@ -728,37 +755,50 @@ struct ContentView: View {
                         .frame(maxWidth: detail ? 730 : 850)
                         .padding(.horizontal, 40).padding(.top, 14)
                 } else if !showRecordingInDocument && !["Готово", "Заметки готовы", "Папка сохранена", "Транскрипт готов", "Аудио сохранено", "Локальная суммаризация…", "Загрузка локальной Whisper-модели / распознавание…"].contains(store.status) {
-                    Text(store.status).font(.caption).foregroundStyle(.secondary).textSelection(.enabled)
+                    Text(language.message(store.status)).font(.caption).foregroundStyle(.secondary).textSelection(.enabled)
                         .frame(maxWidth: .infinity, alignment: .leading).padding(.horizontal, 24).padding(.vertical, 10)
                 }
                 if detail, let i = store.meetings.firstIndex(where: {$0.id == store.selected}) { editor(i) }
                 else { home }
             }.frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top).background(NotePalette.paper)
+            if settings {
+                Divider()
+                settingsPanel.frame(width: 330)
+            }
         }
         .toolbar {
             ToolbarItemGroup(placement: .navigation) {
                 if !detail {
                     Button { sidebarVisible.toggle() } label: { Image(systemName: "sidebar.left") }
-                        .help(sidebarVisible ? "Скрыть боковую панель" : "Показать боковую панель")
+                        .help(sidebarVisible ? l("Скрыть боковую панель") : l("Показать боковую панель"))
                 }
                 Button { searchVisible.toggle(); if !searchVisible { query = "" }; detail = false; searchFocused = searchVisible } label: { Image(systemName: "magnifyingglass") }
-                    .help("Поиск записей")
+                    .help(l("Поиск записей"))
             }
             ToolbarItem(placement: .automatic) { Spacer() }
             ToolbarItem(placement: .primaryAction) {
                 if !store.recording {
-                    Button("Записать звонок", systemImage: "record.circle") {
+                    Button(l("Записать звонок"), systemImage: "record.circle") {
                         Task { await store.start() }
                     }.buttonStyle(NoteButtonStyle()).labelStyle(.titleAndIcon).disabled(store.starting || store.stopping)
-                        .help("Записать микрофон и звук собеседников")
+                        .help(l("Записать микрофон и звук собеседников"))
                 }
             }
             ToolbarItem(placement: .primaryAction) {
-                Button { store.add(folder: folder); detail = true } label: { Label("Новая заметка", systemImage: "plus") }
+                Button { store.add(folder: folder); detail = true } label: { Label(l("Новая заметка"), systemImage: "plus") }
                     .buttonStyle(NoteButtonStyle(selected: true)).labelStyle(.titleAndIcon).keyboardShortcut("n")
             }
         }
+        .onChange(of: settings) { _, isOpen in
+            if !isOpen {
+                modelToken = ""
+                summarySettingsExpanded = false
+                integrationsExpanded = false
+                showModelStatus = false
+            }
+        }
         .onAppear { if ProcessInfo.processInfo.arguments.contains("--design-preview") { DispatchQueue.main.async { NSApp.windows.first(where: { $0.title == "A-notes" })?.setContentSize(NSSize(width:1440,height:1008)) } } }
+        .environment(\.locale, language.locale)
         .tint(NotePalette.accent).preferredColorScheme(darkAppearance ? .dark : .light).frame(minWidth:960,minHeight:640)
         .onChange(of: store.selected) { _, id in tab = id == store.recordingID ? "Заметки" : "Итог" }
         .onChange(of: detail) { _, value in if value { tab = store.selected == store.recordingID ? "Заметки" : "Итог" } }
@@ -766,14 +806,14 @@ struct ContentView: View {
         .sheet(item: $folderDraft) { draft in
             FolderEditor(original: draft.original) { name in saveFolder(name, replacing: draft.original) }
         }
-        .confirmationDialog("Удалить папку «\(deletingFolder ?? "")»? Записи останутся во «Входящих».", isPresented: Binding(get: { deletingFolder != nil }, set: { if !$0 { deletingFolder = nil } }), titleVisibility: .visible) {
-            Button("Удалить папку", role: .destructive) {
+        .confirmationDialog(language.message("Удалить папку «\(deletingFolder ?? "")»? Записи останутся во «Входящих»."), isPresented: Binding(get: { deletingFolder != nil }, set: { if !$0 { deletingFolder = nil } }), titleVisibility: .visible) {
+            Button(l("Удалить папку"), role: .destructive) {
                 if let name = deletingFolder, store.changeLibrary({ try $0.deleteFolder(name) }), folder == name { folder = NoteLibrary.inbox }
                 deletingFolder = nil
             }
         }
-        .confirmationDialog("Удалить запись вместе с заметками, транскриптом и итогом? Аудиофайлы будут перемещены в Корзину.", isPresented: Binding(get: { deletingMeeting != nil }, set: { if !$0 { deletingMeeting = nil } }), titleVisibility: .visible) {
-            Button("Удалить запись", role: .destructive) {
+        .confirmationDialog(l("Удалить запись вместе с заметками, транскриптом и итогом? Аудиофайлы будут перемещены в Корзину."), isPresented: Binding(get: { deletingMeeting != nil }, set: { if !$0 { deletingMeeting = nil } }), titleVisibility: .visible) {
+            Button(l("Удалить запись"), role: .destructive) {
                 if let id = deletingMeeting { store.deleteMeeting(id); if store.selected == nil { detail = false } }
                 deletingMeeting = nil
             }
@@ -786,25 +826,25 @@ struct ContentView: View {
     private var recordingStrip: some View {
         TimelineView(.periodic(from: .now, by: 1)) { context in
             HStack(spacing: 12) {
-                if store.callWasActive { Label("Звонок активен", systemImage: "phone") }
+                if store.callWasActive { Label(l("Звонок активен"), systemImage: "phone") }
                 if store.recording,
                    let meeting = store.meetings.first(where: { $0.id == store.recordingID }) {
-                    if store.automaticRecording { Text("Автозапись").foregroundStyle(.secondary) }
+                    if store.automaticRecording { Text(l("Автозапись")).foregroundStyle(.secondary) }
                     Circle().fill(.red).frame(width: 7, height: 7).accessibilityHidden(true)
                     let seconds = max(0, Int(context.date.timeIntervalSince(meeting.date)))
-                    Text("Идёт запись · \(seconds / 60):\(String(format: "%02d", seconds % 60))").monospacedDigit()
+                    Text(language.message("Идёт запись · \(seconds / 60):\(String(format: "%02d", seconds % 60))")).monospacedDigit()
                     Spacer()
                     if !detail || store.selected != meeting.id {
-                        Button("Открыть запись") {
+                        Button(l("Открыть запись")) {
                             store.selected = meeting.id
                             detail = true
                             tab = "Заметки"
                         }.buttonStyle(NoteButtonStyle(selected: true))
                     }
-                    Button("Остановить", systemImage: "stop") { Task { await store.stop() } }
+                    Button(l("Остановить"), systemImage: "stop") { Task { await store.stop() } }
                         .buttonStyle(NoteButtonStyle())
                 } else {
-                    Text(store.stopping ? "Сохраняем аудио…" : "Запускаем запись…")
+                    Text(store.stopping ? l("Сохраняем аудио…") : l("Запускаем запись…"))
                     Spacer()
                 }
             }.font(.system(size: 13))
@@ -815,134 +855,265 @@ struct ContentView: View {
     private func folderLabel(_ name: String) -> some View {
         let colors: [Color] = [.teal, .purple, .orange, .blue]
         let index = name.utf8.reduce(0) { ($0 + Int($1)) % colors.count }
-        return Text(name).lineLimit(1).padding(.horizontal, 6).padding(.vertical, 2)
+        return Text(language.folder(name)).lineLimit(1).padding(.horizontal, 6).padding(.vertical, 2)
             .background(colors[index].opacity(0.14), in: Capsule())
     }
     private func rowStatus(_ meeting: Meeting) -> String {
-        guard let stage = meeting.job?.stage else { return "Без аудио" }
-        if stage == "Аудиозаписи нет" { return meeting.job?.captureError == nil ? "Без аудио" : "Запись прервана" }
-        if stage.hasPrefix("Распознавание") || stage == "Подготовка распознавания" { return "Распознавание" }
-        if stage.hasPrefix("В очереди") { return "В очереди" }
-        if meeting.job?.error != nil || stage == "Речь не обнаружена" { return "Нужен повтор" }
-        return stage
+        guard let stage = meeting.job?.stage else { return l("Без аудио") }
+        if stage == "Аудиозаписи нет" { return meeting.job?.captureError == nil ? l("Без аудио") : l("Запись прервана") }
+        if stage.hasPrefix("Распознавание") || stage == "Подготовка распознавания" { return l("Распознавание") }
+        if stage.hasPrefix("В очереди") { return l("В очереди") }
+        if meeting.job?.error != nil || stage == "Речь не обнаружена" { return l("Нужен повтор") }
+        return language.message(stage)
     }
     private var settingsPanel: some View {
-        ScrollView { VStack(alignment: .leading, spacing: 14) {
+        VStack(alignment: .leading, spacing: 0) {
             HStack {
-                Text("Настройки").font(.system(size: 22, weight: .semibold))
+                Text(l("Настройки")).font(.title2.weight(.semibold))
                 Spacer()
-                Button { settings = false } label: { Image(systemName: "xmark").frame(width: 12) }
-                    .buttonStyle(NoteButtonStyle()).keyboardShortcut(.cancelAction).accessibilityLabel("Закрыть настройки").help("Закрыть · Esc")
-            }
-            Picker("Оформление", selection: $darkAppearance) {
-                Text("Светлое").tag(false)
-                Text("Тёмное").tag(true)
-            }.pickerStyle(.segmented)
-            settingsField("Начало записи") {
-                Picker("Начало записи", selection: $store.mode) {
-                    ForEach(["Вручную", "Предлагать", "Автоматически"], id: \.self) { Text($0) }
+                Button {
+                    settings = false
+                } label: {
+                    Image(systemName: "xmark")
                 }
+                .buttonStyle(.borderless)
+                .accessibilityLabel(l("Закрыть настройки"))
+                .help(l("Закрыть · Esc"))
             }
-            settingsField("Модель распознавания · Whisper") {
-                Picker("Модель распознавания", selection: $store.asrModel) {
-                    ForEach(Array(Set(store.asrModels + [store.asrModel])).sorted(), id: \.self) { Text($0).tag($0) }
-                }
-            }
-            settingsField("Подключение для итогов") {
-                Picker("Подключение", selection: $store.localModels.provider) {
-                    ForEach(LocalModelProvider.allCases) { Text($0.title).tag($0) }
-                }.onChange(of: store.localModels.provider) { _, _ in
-                    modelToken = ""
-                    Task { await store.refreshModels() }
-                }
-            }
-            settingsField("Адрес сервера") {
-                TextField("Адрес сервера", text: $store.serverURL).textFieldStyle(.roundedBorder)
-            }
-            settingsField("Модель итога") {
-                HStack {
-                    TextField("Идентификатор модели", text: $store.model).textFieldStyle(.roundedBorder)
-                    Menu("Выбрать") {
-                        ForEach(store.summaryModels, id: \.self) { name in Button(name) { store.model = name } }
-                        if store.summaryModels.isEmpty { Text("Обновите список моделей") }
-                    }.fixedSize()
-                }
-            }
-            HStack {
-                SecureField("API-токен, если включён на сервере", text: $modelToken).textFieldStyle(.roundedBorder)
-                Button("Сохранить токен") { store.saveModelToken(modelToken); modelToken = "" }.disabled(modelToken.isEmpty)
-                Button("Удалить токен") { store.saveModelToken(""); modelToken = "" }
-            }.font(.caption)
-            Text(store.connection.locationDescription).font(.caption).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
-            HStack {
-                Button("Проверить связь") { Task { await store.checkConnection() } }.disabled(store.checkingConnection || store.model.isEmpty)
-                if store.checkingConnection { ProgressView().controlSize(.small) }
-            }
-            Text(store.modelStatus).font(.caption).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true).textSelection(.enabled)
+            .padding(.horizontal, 16)
+            .padding(.vertical, 10)
+
             Divider()
-            VStack(alignment: .leading, spacing: 4) {
-                Button { Task { await store.refreshModels() } } label: {
-                    Label("Обновить список моделей", systemImage: "arrow.clockwise").frame(maxWidth: .infinity, alignment: .leading)
-                }.disabled(store.refreshingModels)
-                Button {
-                    var components = URLComponents()
-                    components.scheme = "obsidian"
-                    components.host = "open"
-                    components.queryItems = [URLQueryItem(name: "path", value: store.vaultStorage.vault.path)]
-                    if let url = components.url, !NSWorkspace.shared.open(url) {
-                        NSWorkspace.shared.open(store.vaultStorage.vault)
+            ScrollView {
+                VStack(alignment: .leading, spacing: 12) {
+                    settingsGroup(l("Основные")) {
+                        settingsRow(l("Язык интерфейса")) {
+                            Picker(l("Язык интерфейса"), selection: $language) {
+                                ForEach(InterfaceLanguage.allCases, id: \.self) { option in
+                                    Text(option.title).tag(option)
+                                }
+                            }
+                            .labelsHidden()
+                            .fixedSize()
+                            .accessibilityLabel(l("Язык интерфейса"))
+                        }
+                        settingsRow(l("Оформление")) {
+                            Picker(l("Оформление"), selection: $darkAppearance) {
+                                Text(l("Светлое")).tag(false)
+                                Text(l("Тёмное")).tag(true)
+                            }
+                            .pickerStyle(.segmented)
+                            .labelsHidden()
+                            .fixedSize()
+                            .accessibilityLabel(l("Оформление"))
+                        }
                     }
-                } label: {
-                    Label("Открыть хранилище Obsidian", systemImage: "link").frame(maxWidth: .infinity, alignment: .leading)
+                    settingsGroup(l("Запись")) {
+                        settingsRow(l("Начало записи")) {
+                            Picker(l("Начало записи"), selection: $store.mode) {
+                                ForEach(["Вручную", "Предлагать", "Автоматически"], id: \.self) { Text(l($0)).tag($0) }
+                            }
+                            .labelsHidden()
+                            .fixedSize()
+                            .accessibilityLabel(l("Начало записи"))
+                        }
+                        settingsRow(l("Модель распознавания")) {
+                            Picker(l("Модель распознавания"), selection: $store.asrModel) {
+                                ForEach(Array(Set(store.asrModels + [store.asrModel])).sorted(), id: \.self) { Text($0).tag($0) }
+                            }
+                            .labelsHidden()
+                            .fixedSize()
+                            .accessibilityLabel(l("Модель распознавания"))
+                        }
+                    }
+                    settingsGroup {
+                        inspectorSectionButton(l("Итоги и подключение"), value: store.connection.provider.title, expanded: $summarySettingsExpanded)
+                        if summarySettingsExpanded {
+                            settingsRow(l("Подключение для итогов")) {
+                                Picker(l("Подключение для итогов"), selection: $store.localModels.provider) {
+                                    ForEach(LocalModelProvider.allCases) { Text($0.title).tag($0) }
+                                }.onChange(of: store.localModels.provider) { _, _ in
+                                    modelToken = ""
+                                    showModelStatus = false
+                                    Task { await store.refreshModels() }
+                                }
+                                .labelsHidden()
+                                .fixedSize()
+                                .accessibilityLabel(l("Подключение для итогов"))
+                            }
+                            settingsRow(l("Модель итога")) {
+                                HStack(spacing: 6) {
+                                    TextField(l("Идентификатор модели"), text: $store.model)
+                                        .textFieldStyle(.roundedBorder)
+                                    Menu {
+                                        ForEach(store.summaryModels, id: \.self) { name in Button(name) { store.model = name } }
+                                        if !store.summaryModels.isEmpty { Divider() }
+                                        Button(l("Обновить список моделей")) {
+                                            showModelStatus = true
+                                            Task { await store.refreshModels() }
+                                        }.disabled(store.refreshingModels)
+                                    } label: {
+                                        Image(systemName: "chevron.down")
+                                    }
+                                    .menuStyle(.borderlessButton)
+                                    .menuIndicator(.hidden)
+                                    .fixedSize()
+                                    .accessibilityLabel(l("Выбрать модель"))
+                                }
+                                .frame(width: 148)
+                            }
+                            settingsRow(l("Адрес сервера")) {
+                                TextField(l("Адрес сервера"), text: $store.serverURL)
+                                    .labelsHidden()
+                                    .textFieldStyle(.roundedBorder)
+                                    .frame(width: 145)
+                            }
+                            settingsRow(l("API-токен")) {
+                                HStack(spacing: 6) {
+                                    SecureField(l("API-токен"), text: $modelToken)
+                                        .labelsHidden()
+                                        .textFieldStyle(.roundedBorder)
+                                    Menu {
+                                        Button(l("Сохранить токен")) {
+                                            store.saveModelToken(modelToken)
+                                            modelToken = ""
+                                            showModelStatus = true
+                                        }.disabled(modelToken.isEmpty)
+                                        Button(l("Удалить токен")) {
+                                            store.saveModelToken("")
+                                            modelToken = ""
+                                            showModelStatus = true
+                                        }
+                                    } label: {
+                                        Image(systemName: "ellipsis.circle")
+                                    }
+                                    .menuStyle(.borderlessButton)
+                                    .menuIndicator(.hidden)
+                                    .fixedSize()
+                                    .accessibilityLabel(l("Действия с токеном"))
+                                }
+                            }
+                            if !store.connection.isLoopback {
+                                Text(l(store.connection.locationDescription))
+                                    .font(.caption)
+                                    .foregroundStyle(.secondary)
+                            }
+                            HStack {
+                                Button(l("Проверить связь")) {
+                                    showModelStatus = true
+                                    Task { await store.checkConnection() }
+                                }.disabled(store.checkingConnection || store.model.isEmpty)
+                                if store.checkingConnection { ProgressView().controlSize(.small) }
+                            }
+                            if showModelStatus {
+                                Text(language.message(store.modelStatus))
+                                    .font(.caption)
+                                    .foregroundStyle(.secondary)
+                                    .textSelection(.enabled)
+                            }
+                        }
+                    }
+                    settingsGroup {
+                        inspectorSectionButton(l("Интеграции"), value: "Obsidian", expanded: $integrationsExpanded)
+                        if integrationsExpanded { settingsActions }
+                    }
                 }
-                Button { store.save() } label: {
-                    Label("Обновить из Obsidian", systemImage: "arrow.triangle.2.circlepath").frame(maxWidth: .infinity, alignment: .leading)
-                }
-                Button {
-                    NSWorkspace.shared.open(URL(string: "x-apple.systempreferences:com.apple.Notifications-Settings.extension")!)
-                } label: {
-                    Label("Уведомления macOS", systemImage: "bell").frame(maxWidth: .infinity, alignment: .leading)
-                }
-                Button {
-                    if let url = Bundle.main.url(forResource: "CODEX_SETUP", withExtension: "md") { NSWorkspace.shared.open(url) }
-                } label: { Label("Инструкция для Codex", systemImage: "doc.text").frame(maxWidth: .infinity, alignment: .leading) }
-            }.buttonStyle(NoteButtonStyle())
-            HStack {
-                Text("Изменения сохраняются автоматически").font(.caption).foregroundStyle(.secondary)
-                Spacer()
-                Button("Готово") { settings = false }.buttonStyle(NoteButtonStyle(selected: true)).keyboardShortcut(.defaultAction)
+                .padding(12)
             }
-        }.padding(24) }.frame(width: 540, height: 710).background(NotePalette.paper)
-            .onAppear { if store.persistedSettingsEnabled { store.localModels = LocalModelSettings.load() } }
-            .onExitCommand { settings = false }
+        }
+        .frame(maxHeight: .infinity, alignment: .top)
+        .background(NotePalette.paper)
+        .onAppear {
+            if store.persistedSettingsEnabled { store.localModels = LocalModelSettings.load() }
+        }
+        .onExitCommand { settings = false }
     }
-    private func settingsField<Content: View>(_ title: String, @ViewBuilder content: () -> Content) -> some View {
-        VStack(alignment: .leading, spacing: 8) {
-            Text(title).font(.system(size: 13, weight: .medium)).foregroundStyle(.secondary)
-            content().labelsHidden().pickerStyle(.menu).controlSize(.large).frame(maxWidth: .infinity)
+
+    private func settingsGroup<Content: View>(_ title: String? = nil, @ViewBuilder content: () -> Content) -> some View {
+        VStack(alignment: .leading, spacing: 10) {
+            if let title { Text(title).font(.headline).accessibilityAddTraits(.isHeader) }
+            content()
+        }
+        .padding(12)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(NotePalette.surface, in: RoundedRectangle(cornerRadius: 10))
+    }
+
+    private func settingsRow<Control: View>(_ title: String, @ViewBuilder control: () -> Control) -> some View {
+        HStack(spacing: 8) {
+            Text(title).accessibilityHidden(true)
+            Spacer(minLength: 0)
+            control()
         }
     }
+
+    private func inspectorSectionButton(_ title: String, value: String, expanded: Binding<Bool>) -> some View {
+        Button {
+            expanded.wrappedValue.toggle()
+        } label: {
+            HStack(spacing: 8) {
+                Image(systemName: expanded.wrappedValue ? "chevron.down" : "chevron.right")
+                    .imageScale(.small)
+                    .frame(width: 10)
+                    .accessibilityHidden(true)
+                Text(title)
+                Spacer(minLength: 4)
+                Text(value).foregroundStyle(.secondary).lineLimit(1)
+            }
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .accessibilityLabel(title)
+        .accessibilityValue(value + ", " + l(expanded.wrappedValue ? "Развёрнуто" : "Свёрнуто"))
+    }
+
+    @ViewBuilder private var settingsActions: some View {
+        Button {
+            var components = URLComponents()
+            components.scheme = "obsidian"
+            components.host = "open"
+            components.queryItems = [URLQueryItem(name: "path", value: store.vaultStorage.vault.path)]
+            if let url = components.url, !NSWorkspace.shared.open(url) {
+                NSWorkspace.shared.open(store.vaultStorage.vault)
+            }
+        } label: {
+            Label(l("Открыть хранилище Obsidian"), systemImage: "link")
+        }
+        Button { store.save() } label: {
+            Label(l("Обновить из Obsidian"), systemImage: "arrow.triangle.2.circlepath")
+        }
+        Button {
+            NSWorkspace.shared.open(URL(string: "x-apple.systempreferences:com.apple.Notifications-Settings.extension")!)
+        } label: {
+            Label(l("Уведомления macOS"), systemImage: "bell")
+        }
+        Button {
+            if let url = Bundle.main.url(forResource: "CODEX_SETUP", withExtension: "md") { NSWorkspace.shared.open(url) }
+        } label: { Label(l("Инструкция для Codex"), systemImage: "doc.text") }
+
+    }
+
     private var navigation: some View {
         VStack(alignment: .leading, spacing: 0) {
-            navRow("Все заметки", icon: "house", selected: folder == nil && !detail) { folder = nil; detail = false }
+            navRow(l("Все заметки"), icon: "house", selected: folder == nil && !detail) { folder = nil; detail = false }
                 .modifier(NoteRowSurface(selected: folder == nil && !detail)).padding(.top, 16)
             HStack {
-                Text("Папки").font(.system(size: 12, weight: .medium)).foregroundStyle(.secondary)
+                Text(l("Папки")).font(.system(size: 12, weight: .medium)).foregroundStyle(.secondary)
                 Spacer()
                 Button { folderDraft = FolderDraft() } label: { Image(systemName: "plus").frame(width: 12) }
-                    .buttonStyle(NoteButtonStyle()).help("Создать папку").accessibilityLabel("Создать папку")
+                    .buttonStyle(NoteButtonStyle()).help(l("Создать папку")).accessibilityLabel(l("Создать папку"))
             }.padding(.leading, 10).padding(.top, 24).padding(.bottom, 6)
             ScrollView {
                 VStack(spacing: 3) {
                     ForEach(folders, id: \.self) { name in
                         HStack(spacing: 0) {
-                            navRow(name, icon: "folder", selected: folder == name) { folder = name; detail = false }
+                            navRow(language.folder(name), icon: "folder", selected: folder == name) { folder = name; detail = false }
                             if name != NoteLibrary.inbox {
                                 Menu { folderActions(name) } label: {
                                     Image(systemName: "ellipsis").frame(width: 28, height: 32).contentShape(Rectangle())
                                         .modifier(NoteRowSurface())
                                 }.menuStyle(.borderlessButton).menuIndicator(.hidden).fixedSize().padding(.trailing, 4)
-                                    .accessibilityLabel("Действия с папкой «\(name)»").help("Действия с папкой")
+                                    .accessibilityLabel(language.message("Действия с папкой «\(name)»")).help(l("Действия с папкой"))
                             }
                         }.modifier(NoteRowSurface(selected: folder == name))
                             .contextMenu { if name != NoteLibrary.inbox { folderActions(name) } }
@@ -950,9 +1121,9 @@ struct ContentView: View {
                 }
             }.scrollIndicators(.hidden)
             Button { settings.toggle() } label: {
-                Label("Настройки", systemImage: "gearshape").frame(maxWidth: .infinity, alignment: .leading)
+                Label(l("Настройки"), systemImage: "gearshape").frame(maxWidth: .infinity, alignment: .leading)
             }.buttonStyle(NoteButtonStyle(selected: settings)).padding(.vertical, 10)
-                .popover(isPresented: $settings, arrowEdge: .trailing) { settingsPanel }
+
         }.padding(.horizontal, 10).frame(width: 228).background(NotePalette.sidebar)
     }
     private func navRow(_ title: String, icon: String, selected: Bool = false, action: @escaping () -> Void) -> some View {
@@ -972,10 +1143,10 @@ struct ContentView: View {
                 ScrollView {
                     VStack(alignment:.leading,spacing:38) {
                         if searchVisible {
-                            HStack { Image(systemName:"magnifyingglass"); TextField("Поиск заметок",text:$query).accessibilityLabel("Поиск заметок").textFieldStyle(.plain).focused($searchFocused).onExitCommand { query = ""; searchVisible = false }; Button { query = ""; searchVisible = false } label: { Image(systemName:"xmark") }.buttonStyle(NoteButtonStyle()).accessibilityLabel("Закрыть поиск") }.padding(12).background(NotePalette.surface,in:RoundedRectangle(cornerRadius:10))
+                            HStack { Image(systemName:"magnifyingglass"); TextField(l("Поиск заметок"),text:$query).accessibilityLabel(l("Поиск заметок")).textFieldStyle(.plain).focused($searchFocused).onExitCommand { query = ""; searchVisible = false }; Button { query = ""; searchVisible = false } label: { Image(systemName:"xmark") }.buttonStyle(NoteButtonStyle()).accessibilityLabel(l("Закрыть поиск")) }.padding(12).background(NotePalette.surface,in:RoundedRectangle(cornerRadius:10))
                         }
-                        Text(folder ?? "Все заметки").font(.system(size:28,weight:.semibold))
-                        if filtered.isEmpty { Text(query.isEmpty ? "Здесь появятся ваши заметки" : "Ничего не найдено").font(.system(size:16)).foregroundStyle(.secondary).padding(.top,24) }
+                        Text(folder.map(language.folder) ?? l("Все заметки")).font(.system(size:28,weight:.semibold))
+                        if filtered.isEmpty { Text(query.isEmpty ? l("Здесь появятся ваши заметки") : l("Ничего не найдено")).font(.system(size:16)).foregroundStyle(.secondary).padding(.top,24) }
                         ForEach(days,id: \.self) { day in
                             VStack(alignment:.leading,spacing:8) {
                                 Text(dayName(day)).font(.system(size:14,weight:.medium)).foregroundStyle(.secondary).padding(.bottom,2)
@@ -995,12 +1166,12 @@ struct ContentView: View {
                                                 }.font(.system(size: 12))
                                             }
                                             Spacer(minLength: 8)
-                                            Text(meeting.date.formatted(date:.omitted,time:.shortened)).font(.system(size:14)).foregroundStyle(.secondary).frame(width:43,alignment:.trailing).padding(.top,8)
+                                            Text(meeting.date.formatted(Date.FormatStyle(date: .omitted, time: .shortened, locale: language.locale))).font(.system(size:14)).foregroundStyle(.secondary).fixedSize().padding(.top,8)
                                         }.frame(minHeight:52,alignment:.top).contentShape(Rectangle())
                                     }.buttonStyle(.plain)
                                     Menu { meetingActions(meeting) } label: { Image(systemName: "ellipsis").frame(width: 32, height: 32).contentShape(Rectangle()) }
                                         .menuStyle(.borderlessButton).menuIndicator(.hidden).frame(width: 32, height: 32)
-                                        .accessibilityLabel("Действия с записью «\(meeting.title)»").help("Действия с записью")
+                                        .accessibilityLabel(language.message("Действия с записью «\(meeting.title)»")).help(l("Действия с записью"))
                                     }.padding(.horizontal, 12).padding(.vertical, 6).modifier(NoteRowSurface()).contextMenu { meetingActions(meeting) }
                                 }
                             }
@@ -1015,36 +1186,41 @@ struct ContentView: View {
             if let old { try library.renameFolder(old, to: name) }
             else { try library.createFolder(name) }
         }
-        guard ok else { return store.status }
+        guard ok else { return language.message(store.status) }
         store.status = "Папка сохранена"
         if folder == old || old == nil { folder = name.trimmingCharacters(in: .whitespacesAndNewlines) }
         detail = false
         return nil
     }
     @ViewBuilder private func folderActions(_ name: String) -> some View {
-        Button("Переименовать") { DispatchQueue.main.async { folderDraft = FolderDraft(original: name) } }
-        Button("Удалить папку", role: .destructive) { DispatchQueue.main.async { deletingFolder = name } }
+        Button(l("Переименовать")) { DispatchQueue.main.async { folderDraft = FolderDraft(original: name) } }
+        Button(l("Удалить папку"), role: .destructive) { DispatchQueue.main.async { deletingFolder = name } }
     }
     @ViewBuilder private func meetingActions(_ meeting: Meeting) -> some View {
-        Menu("Переместить в папку") {
+        Menu(l("Переместить в папку")) {
             ForEach(folders, id: \.self) { destination in
-                Button(destination) { store.changeLibrary { try $0.move(meeting.id, to: destination) } }
+                Button(language.folder(destination)) { store.changeLibrary { try $0.move(meeting.id, to: destination) } }
                     .disabled(destination == meeting.folder)
             }
         }
-        Button("Удалить запись", role: .destructive) { DispatchQueue.main.async { deletingMeeting = meeting.id } }
+        Button(l("Удалить запись"), role: .destructive) { DispatchQueue.main.async { deletingMeeting = meeting.id } }
             .disabled(!store.canDelete(meeting.id))
     }
     private func editor(_ i: Int) -> some View {
-        VStack(alignment:.leading,spacing:20) {
+        let meeting = store.meetings[i]
+        let needsTranscription = meeting.transcript.isEmpty || meeting.job?.retranscribe == true
+        let canRetryRecording = meeting.id != store.recordingID && meeting.job?.pending != true
+            && (needsTranscription || meeting.summary.isEmpty || meeting.job?.error != nil)
+            && store.audioDuration(meeting.id) > 0
+        return VStack(alignment:.leading,spacing:20) {
             Button {
                 detail = false
             } label: {
-                Label(folder ?? "Все заметки", systemImage: "chevron.left")
-            }.buttonStyle(NoteButtonStyle()).help("Вернуться к списку записей")
-            TextField("Название",text:$store.meetings[i].title, axis: .vertical).accessibilityLabel("Название записи").lineLimit(1...3).textFieldStyle(.plain).font(.system(size:28,weight:.semibold))
+                Label(folder.map(language.folder) ?? l("Все заметки"), systemImage: "chevron.left")
+            }.buttonStyle(NoteButtonStyle()).help(l("Вернуться к списку записей"))
+            TextField(l("Название"),text:$store.meetings[i].title, axis: .vertical).accessibilityLabel(l("Название записи")).lineLimit(1...3).textFieldStyle(.plain).font(.system(size:28,weight:.semibold))
             HStack(spacing: 12) {
-                Text(store.meetings[i].date.formatted(date: .long, time: .shortened)).foregroundStyle(.secondary)
+                Text(meeting.date.formatted(Date.FormatStyle(date: .long, time: .shortened, locale: language.locale))).foregroundStyle(.secondary)
                 if store.meetings[i].id != store.recordingID {
                     Text(rowStatus(store.meetings[i])).foregroundStyle(.secondary)
                 }
@@ -1056,22 +1232,37 @@ struct ContentView: View {
                             store.changeLibrary { try $0.move(id, to: destination) }
                         } label: {
                             if destination == store.meetings[i].folder {
-                                Label(destination, systemImage: "checkmark")
-                            } else { Text(destination) }
+                                Label(language.folder(destination), systemImage: "checkmark")
+                            } else { Text(language.folder(destination)) }
                         }.disabled(destination == store.meetings[i].folder)
                     }
                 } label: {
-                    Label(store.meetings[i].folder, systemImage: "folder")
-                }.fixedSize().accessibilityLabel("Папка встречи: \(store.meetings[i].folder)")
+                    Label(language.folder(meeting.folder), systemImage: "folder")
+                }.fixedSize().accessibilityLabel(language.message("Папка встречи: \(language.folder(meeting.folder))"))
             }.font(.system(size: 12))
             if showRecordingInDocument { recordingStrip }
             HStack(spacing: 4) {
                 ForEach(["Итог", "Транскрипт", "Заметки"], id: \.self) { name in
-                    Button(name) { tab = name }
+                    Button(l(name)) { tab = name }
                         .buttonStyle(NoteButtonStyle(selected: tab == name, capsule: true))
                         .accessibilityAddTraits(tab == name ? .isSelected : [])
                 }
             }.padding(3).background(NotePalette.surface, in: Capsule())
+            if canRetryRecording {
+                HStack(spacing: 16) {
+                    Text(needsTranscription
+                         ? l("Аудиозапись сохранена. Распознавание не завершено.")
+                         : l("Аудиозапись и транскрипт сохранены. Создание итога не завершено."))
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                    Button(l("Повторить")) {
+                        Task { await store.retryRecording(meeting.id) }
+                    }
+                    .buttonStyle(NoteButtonStyle(selected: true))
+                    .disabled(store.recording || store.starting || store.stopping)
+                }
+                .padding(16)
+                .background(NotePalette.surface, in: RoundedRectangle(cornerRadius: 12))
+            }
             if tab == "Транскрипт" {
                 TranscriptChat(transcript: store.meetings[i].transcript, attributions: store.meetings[i].speakerAttributions ?? [])
                     .frame(maxWidth: .infinity, maxHeight: .infinity)
@@ -1079,20 +1270,22 @@ struct ContentView: View {
                 VStack(alignment: .leading, spacing: 16) {
                     HStack {
                         if store.meetings[i].job?.pending == true { ProgressView().controlSize(.small) }
-                        Text(store.meetings[i].job?.pending == true ? "Обработка записи" : "Итога пока нет").font(.title3)
+                        Text(store.meetings[i].job?.pending == true ? l("Обработка записи") : l("Итога пока нет")).font(.title3)
                     }
                     TimelineView(.periodic(from: .now, by: 1)) { context in
-                        Text(store.feedback(store.meetings[i], now: context.date)).foregroundStyle(.secondary).textSelection(.enabled)
+                        Text(store.feedback(store.meetings[i], now: context.date, language: language)).foregroundStyle(.secondary).textSelection(.enabled)
                     }
-                    Text(store.meetings[i].job?.pending == true ? "Задание сохранено. Обработка продолжится автоматически, в том числе после выхода Mac из сна. Можно продолжать писать заметки." : store.meetings[i].transcript.isEmpty ? "После записи звонка транскрипт и итог появятся автоматически. Пока можно писать заметки." : "Транскрипт сохранён. Запустите создание итога повторно — распознавать аудио заново не нужно.")
-                        .font(.callout).foregroundStyle(.secondary)
-                    if !store.meetings[i].transcript.isEmpty {
-                        Button(store.meetings[i].job?.pending == true ? "Обработка…" : "Запустить итог заново") {
-                            let id = store.meetings[i].id
-                            Task { await store.summarize(meetingID: id) }
-                        }.buttonStyle(NoteButtonStyle(selected: true)).disabled(store.meetings[i].job?.pending == true)
-                    } else {
-                        Button("Открыть заметки") { tab = "Заметки" }.buttonStyle(NoteButtonStyle(selected: true))
+                    if !canRetryRecording {
+                        Text(store.meetings[i].job?.pending == true ? l("Задание сохранено. Обработка продолжится автоматически, в том числе после выхода Mac из сна. Можно продолжать писать заметки.") : store.meetings[i].transcript.isEmpty ? l("После записи звонка транскрипт и итог появятся автоматически. Пока можно писать заметки.") : l("Транскрипт сохранён. Можно запустить создание итога повторно."))
+                            .font(.callout).foregroundStyle(.secondary)
+                        if !store.meetings[i].transcript.isEmpty {
+                            Button(store.meetings[i].job?.pending == true ? l("Обработка…") : l("Запустить итог заново")) {
+                                let id = store.meetings[i].id
+                                Task { await store.summarize(meetingID: id) }
+                            }.buttonStyle(NoteButtonStyle(selected: true)).disabled(store.meetings[i].job?.pending == true)
+                        } else {
+                            Button(l("Открыть заметки")) { tab = "Заметки" }.buttonStyle(NoteButtonStyle(selected: true))
+                        }
                     }
                 }.padding(24).frame(maxWidth: .infinity, alignment: .leading)
                     .background(NotePalette.surface, in: RoundedRectangle(cornerRadius: 12))
@@ -1101,38 +1294,38 @@ struct ContentView: View {
                 SummaryView(text: $store.meetings[i].summary).id(store.meetings[i].id)
             } else {
                 TextEditor(text: $store.meetings[i].notes)
-                    .font(.system(size: 16)).lineSpacing(5).scrollContentBackground(.hidden).accessibilityLabel("Заметки встречи")
+                    .font(.system(size: 16)).lineSpacing(5).scrollContentBackground(.hidden).accessibilityLabel(l("Заметки встречи"))
             }
             Divider()
             HStack(spacing: 8) {
                 TimelineView(.periodic(from: .now, by: 1)) { context in
                     HStack(spacing: 8) {
                         if store.meetings[i].job?.pending == true { ProgressView().controlSize(.small) }
-                        Text(store.feedback(store.meetings[i], now: context.date)).font(.caption).foregroundStyle(.secondary).lineLimit(2).textSelection(.enabled)
+                        Text(store.feedback(store.meetings[i], now: context.date, language: language)).font(.caption).foregroundStyle(.secondary).lineLimit(2).textSelection(.enabled)
                     }
                 }
                 Spacer(minLength: 12)
                 Menu {
-                    Button("Показать Markdown в хранилище") {
+                    Button(l("Показать Markdown в хранилище")) {
                         NSWorkspace.shared.selectFile(store.vaultStorage.meetingURL(store.meetings[i].id).appendingPathComponent("index.md").path, inFileViewerRootedAtPath: "")
                     }
-                    Button("Экспортировать в .txt…") { exportText(store.meetings[i]) }
-                    Button("Открыть текстовый файл") { openText(store.meetings[i]) }
-                } label: { Label("Экспорт", systemImage: "square.and.arrow.up").padding(.horizontal, 8).frame(height: 32) }
+                    Button(l("Экспортировать в .txt…")) { exportText(store.meetings[i]) }
+                    Button(l("Открыть текстовый файл")) { openText(store.meetings[i]) }
+                } label: { Label(l("Экспорт"), systemImage: "square.and.arrow.up").padding(.horizontal, 8).frame(height: 32) }
                     .menuStyle(.borderlessButton).fixedSize().modifier(NoteRowSurface())
                 Menu {
-                    Button("Распознать аудио повторно") { let id = store.meetings[i].id; Task { await store.transcribe(meetingID: id) } }
+                    Button(l("Распознать аудио повторно")) { let id = store.meetings[i].id; Task { await store.transcribe(meetingID: id) } }
                         .disabled(store.recording || store.starting || store.stopping || store.meetings[i].job?.pending == true || store.audioDuration(store.meetings[i].id) == 0)
-                    Button(store.meetings[i].summary.isEmpty ? "Повторить создание итога" : "Обновить итог") { let id = store.meetings[i].id; Task { await store.summarize(meetingID: id) } }
+                    Button(store.meetings[i].summary.isEmpty ? l("Повторить создание итога") : l("Обновить итог")) { let id = store.meetings[i].id; Task { await store.summarize(meetingID: id) } }
                         .disabled(store.meetings[i].job?.pending == true || store.meetings[i].transcript.isEmpty)
                     if store.audioDuration(store.meetings[i].id) > 0 {
-                        Button("Показать аудиофайлы в Finder") { NSWorkspace.shared.selectFile(nil, inFileViewerRootedAtPath: store.root.appendingPathComponent(store.meetings[i].id.uuidString).path) }
+                        Button(l("Показать аудиофайлы в Finder")) { NSWorkspace.shared.selectFile(nil, inFileViewerRootedAtPath: store.root.appendingPathComponent(store.meetings[i].id.uuidString).path) }
                     }
                     Divider()
                     meetingActions(store.meetings[i])
                 } label: { Image(systemName: "ellipsis").frame(width: 28, height: 32).contentShape(Rectangle()) }
                     .menuStyle(.borderlessButton).menuIndicator(.hidden).fixedSize().modifier(NoteRowSurface())
-                    .accessibilityLabel("Действия с записью").help("Действия с записью")
+                    .accessibilityLabel(l("Действия с записью")).help(l("Действия с записью"))
             }
 
         }.frame(maxWidth:730, maxHeight: .infinity, alignment: .top).padding(.horizontal,40).padding(.top,30).padding(.bottom,20).frame(maxWidth:.infinity)
@@ -1141,7 +1334,7 @@ struct ContentView: View {
         let panel = NSSavePanel()
         panel.allowedContentTypes = [.plainText]
         panel.nameFieldStringValue = MeetingExport.filename(meeting)
-        panel.title = "Экспорт заметки"
+        panel.title = l("Экспорт заметки")
         guard let window = NSApp.windows.first(where: { $0.title == "A-notes" && $0.isVisible }) else { return }
         panel.beginSheetModal(for: window) { response in
             guard response == .OK, let url = panel.url else { return }
