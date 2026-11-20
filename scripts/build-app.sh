@@ -40,8 +40,8 @@ done
 cat > "$APP/Contents/Info.plist" <<'PLIST'
 <?xml version="1.0" encoding="UTF-8"?><!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd"><plist version="1.0"><dict>
 <key>CFBundleIdentifier</key><string>personal.anton.notes</string>
-<key>CFBundleName</key><string>A-notes</string>
-<key>CFBundleDisplayName</key><string>A-notes</string>
+<key>CFBundleName</key><string>Kinky Notes</string>
+<key>CFBundleDisplayName</key><string>Kinky Notes</string>
 <key>CFBundleIconFile</key><string>AppIcon</string>
 <key>CFBundleExecutable</key><string>A-notes</string>
 <key>CFBundleShortVersionString</key><string>1.0.0</string>

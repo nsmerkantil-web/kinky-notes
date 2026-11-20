@@ -389,7 +389,7 @@ struct Meeting: Codable, Identifiable, Equatable {
         starting = true
         defer { starting = false }
         if permissionFailed && !CGPreflightScreenCaptureAccess() {
-            status = "macOS отклонила захват. После изменения разрешения полностью перезапустите A-notes. Если переключатель уже включён, удалите A-notes из списка записи экрана и добавьте текущую сборку заново."
+            status = "macOS отклонила захват. После изменения разрешения полностью перезапустите Kinky Notes. Если переключатель уже включён, удалите Kinky Notes из списка записи экрана и добавьте текущую сборку заново."
             return
         }
         guard await AVCaptureDevice.requestAccess(for: .audio) else { status = "Разрешите микрофон в настройках macOS"; return }
@@ -797,7 +797,7 @@ struct ContentView: View {
                 showModelStatus = false
             }
         }
-        .onAppear { if ProcessInfo.processInfo.arguments.contains("--design-preview") { DispatchQueue.main.async { NSApp.windows.first(where: { $0.title == "A-notes" })?.setContentSize(NSSize(width:1440,height:1008)) } } }
+        .onAppear { if ProcessInfo.processInfo.arguments.contains("--design-preview") { DispatchQueue.main.async { NSApp.windows.first(where: { $0.title == "Kinky Notes" })?.setContentSize(NSSize(width:1440,height:1008)) } } }
         .environment(\.locale, language.locale)
         .tint(NotePalette.accent).preferredColorScheme(darkAppearance ? .dark : .light).frame(minWidth:960,minHeight:640)
         .onChange(of: store.selected) { _, id in tab = id == store.recordingID ? "Заметки" : "Итог" }
@@ -1335,7 +1335,7 @@ struct ContentView: View {
         panel.allowedContentTypes = [.plainText]
         panel.nameFieldStringValue = MeetingExport.filename(meeting)
         panel.title = l("Экспорт заметки")
-        guard let window = NSApp.windows.first(where: { $0.title == "A-notes" && $0.isVisible }) else { return }
+        guard let window = NSApp.windows.first(where: { $0.title == "Kinky Notes" && $0.isVisible }) else { return }
         panel.beginSheetModal(for: window) { response in
             guard response == .OK, let url = panel.url else { return }
             do { try MeetingExport.write(meeting, to: url) }
@@ -1355,7 +1355,7 @@ struct ContentView: View {
 }
 struct AntonNotesApp: App {
     @StateObject var store = Store()
-    var body: some Scene { WindowGroup("A-notes") { ContentView().environmentObject(store) }.windowStyle(.hiddenTitleBar).windowToolbarStyle(.unified).defaultSize(width:1440,height:1008) }
+    var body: some Scene { WindowGroup("Kinky Notes") { ContentView().environmentObject(store) }.windowStyle(.hiddenTitleBar).windowToolbarStyle(.unified).defaultSize(width:1440,height:1008) }
 }
 
 if SetupCommand.runIfRequested() { dispatchMain() }

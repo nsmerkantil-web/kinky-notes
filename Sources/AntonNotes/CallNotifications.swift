@@ -17,7 +17,7 @@ final class CallNotifications: NSObject, UNUserNotificationCenterDelegate {
     func show() async {
         do {
             guard try await center.requestAuthorization(options: [.alert, .sound]) else {
-                onError?("Разрешите уведомления A-notes в настройках macOS → Уведомления")
+                onError?("Разрешите уведомления Kinky Notes в настройках macOS → Уведомления")
                 return
             }
             let content = UNMutableNotificationContent()
@@ -42,7 +42,7 @@ final class CallNotifications: NSObject, UNUserNotificationCenterDelegate {
     private func deliver(id: UUID, event: String, title: String, body: String) async {
         do {
             guard try await center.requestAuthorization(options: [.alert, .sound]) else {
-                onError?("Разрешите уведомления A-notes в настройках macOS → Уведомления")
+                onError?("Разрешите уведомления Kinky Notes в настройках macOS → Уведомления")
                 return
             }
             let content = UNMutableNotificationContent()

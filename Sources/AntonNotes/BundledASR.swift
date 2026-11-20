@@ -12,12 +12,12 @@ enum BundledASR {
         let tokenizer = root.appendingPathComponent("Hub/models/openai/whisper-large-v3")
         for path in ["AudioEncoder.mlmodelc", "TextDecoder.mlmodelc", "MelSpectrogram.mlmodelc"] {
             guard FileManager.default.fileExists(atPath: modelFolder.appendingPathComponent(path).path) else {
-                throw LocalModelError.message("Встроенная Whisper-модель повреждена. Переустановите A-notes; аудио сохранено.")
+                throw LocalModelError.message("Встроенная Whisper-модель повреждена. Переустановите Kinky Notes; аудио сохранено.")
             }
         }
         for path in ["tokenizer.json", "tokenizer_config.json", "config.json"] {
             guard FileManager.default.fileExists(atPath: tokenizer.appendingPathComponent(path).path) else {
-                throw LocalModelError.message("Отсутствуют файлы встроенного tokenizer. Переустановите A-notes.")
+                throw LocalModelError.message("Отсутствуют файлы встроенного tokenizer. Переустановите Kinky Notes.")
             }
         }
         return try await WhisperKit(WhisperKitConfig(model: model, modelFolder: modelFolder.path,
@@ -64,7 +64,7 @@ enum SetupCommand {
                     if let suppliedToken { try LocalModelCredentials.save(suppliedToken, for: settings.connection) }
                     settings.save()
                     if useBundledASR { UserDefaults.standard.set(BundledASR.model, forKey: "asrModel") }
-                    print("Настройки сохранены. Уже запущенная A-notes подхватит их перед следующим заданием; активное задание сохранит прежнее подключение.")
+                    print("Настройки сохранены. Уже запущенная Kinky Notes подхватит их перед следующим заданием; активное задание сохранит прежнее подключение.")
                 case "--check-local-model":
                     try await checkModel(LocalModelSettings.load().connection)
                 case "--audit-processing", "--audit-reopen":

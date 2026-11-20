@@ -13,7 +13,7 @@ final class ObsidianStorage {
     ]
     struct Conflict: LocalizedError {
         let path: String
-        var errorDescription: String? { "Текст изменён одновременно в A-notes и Obsidian: \(path). Версия A-notes сохранена в папке «Конфликты»; согласуйте тексты и повторите сохранение." }
+        var errorDescription: String? { "Текст изменён одновременно в Kinky Notes и Obsidian: \(path). Версия Kinky Notes сохранена в папке «Конфликты»; согласуйте тексты и повторите сохранение." }
     }
     init(root: URL, vault: URL) { self.root = root; self.vault = vault }
     func meetingURL(_ id: UUID) -> URL { vault.appendingPathComponent("Встречи/\(id.uuidString)") }
@@ -107,14 +107,14 @@ final class ObsidianStorage {
                 try put("---\ntype: meeting\nsource: anotes\ntags: [anotes/meeting]\n---\n\n# Встреча\n\n\(link("Встречи/\(meeting.id.uuidString)/_index", "Тексты и сведения о встрече"))\n\nЗдесь можно добавлять теги, ссылки на темы и собственные выводы.\n", at: index)
             }
             let path = "Встречи/\(meeting.id.uuidString)/"
-            let body = "# \(meeting.title.replacingOccurrences(of: "\n", with: " "))\n\nДата: \(ISO8601DateFormatter().string(from: meeting.date))\n\nПапка: \(link(folderPath(meeting.folder), meeting.folder))\n\n" + Self.fields.map { "- " + link(path + $0.0, $0.0.replacingOccurrences(of: ".md", with: "")) }.joined(separator: "\n") + "\n- \(link(path + "index", "Теги, связи и выводы"))\n\nАвтоматический индекс A-notes. Свои дополнения храните в index.md.\n"
+            let body = "# \(meeting.title.replacingOccurrences(of: "\n", with: " "))\n\nДата: \(ISO8601DateFormatter().string(from: meeting.date))\n\nПапка: \(link(folderPath(meeting.folder), meeting.folder))\n\n" + Self.fields.map { "- " + link(path + $0.0, $0.0.replacingOccurrences(of: ".md", with: "")) }.joined(separator: "\n") + "\n- \(link(path + "index", "Теги, связи и выводы"))\n\nАвтоматический индекс Kinky Notes. Свои дополнения храните в index.md.\n"
             try put(body, at: meetingURL(meeting.id).appendingPathComponent("_index.md"))
         }
         for folder in merged.folders {
             let items = merged.meetings.filter { $0.folder == folder }.sorted { $0.date > $1.date }
-            try put("---\ntype: index\ntags: [anotes/folder]\n---\n\n# \(folder)\n\n" + items.map { "- " + link("Встречи/\($0.id.uuidString)/index", $0.title) }.joined(separator: "\n") + "\n\n[[Обзор]]\n\nАвтоматический индекс A-notes.\n", at: vault.appendingPathComponent(folderPath(folder)))
+            try put("---\ntype: index\ntags: [anotes/folder]\n---\n\n# \(folder)\n\n" + items.map { "- " + link("Встречи/\($0.id.uuidString)/index", $0.title) }.joined(separator: "\n") + "\n\n[[Обзор]]\n\nАвтоматический индекс Kinky Notes.\n", at: vault.appendingPathComponent(folderPath(folder)))
         }
-        try put("# A-notes\n\nОтдельная база встреч.\n\n## Папки\n\n" + merged.folders.map { "- " + link(folderPath($0), $0) }.joined(separator: "\n") + "\n\n[[Темы/index|Темы и связи]] · [[Как пользоваться]]\n\nАвтоматический обзор A-notes.\n", at: vault.appendingPathComponent("Обзор.md"))
+        try put("# Kinky Notes\n\nОтдельная база встреч.\n\n## Папки\n\n" + merged.folders.map { "- " + link(folderPath($0), $0) }.joined(separator: "\n") + "\n\n[[Темы/index|Темы и связи]] · [[Как пользоваться]]\n\nАвтоматический обзор Kinky Notes.\n", at: vault.appendingPathComponent("Обзор.md"))
         let guide = vault.appendingPathComponent("Как пользоваться.md")
         if !fm.fileExists(atPath: guide.path) {
             try put(Self.guide, at: guide)
@@ -133,7 +133,7 @@ final class ObsidianStorage {
             try? fm.removeItem(at: meetingURL(old.id))
         }
         for old in baseline?.folders ?? [] where !merged.folders.contains(old) {
-            try? put("# \(old)\n\nПапка переименована или удалена в A-notes. Актуальная навигация: [[Обзор]].\n", at: vault.appendingPathComponent(folderPath(old)))
+            try? put("# \(old)\n\nПапка переименована или удалена в Kinky Notes. Актуальная навигация: [[Обзор]].\n", at: vault.appendingPathComponent(folderPath(old)))
         }
         baseline = merged
         return merged
@@ -141,14 +141,14 @@ final class ObsidianStorage {
     static let guide = """
     # Как пользоваться
 
-    Это отдельный Obsidian vault A-notes. Начните с [[Обзор]].
+    Это отдельный Obsidian vault Kinky Notes. Начните с [[Обзор]].
 
-    - Встречи/<UUID>/Заметки.md, Итог.md и Транскрипт.md — полные тексты, доступные в A-notes и Obsidian. Их можно редактировать; изменения читаются при сохранении в приложении, по кнопке «Обновить из Obsidian» и после перезапуска.
+    - Встречи/<UUID>/Заметки.md, Итог.md и Транскрипт.md — полные тексты, доступные в Kinky Notes и Obsidian. Их можно редактировать; изменения читаются при сохранении в приложении, по кнопке «Обновить из Obsidian» и после перезапуска.
     - Встречи/<UUID>/index.md — ваша страница тегов и связей. Добавляйте теги в YAML tags или #теги, ссылки [[Темы/Проект]] и ссылки на другие встречи. Приложение её не перезаписывает.
-    - Обзор.md, Папки/*.md и Встречи/*/_index.md создаются автоматически. Название, дата и папка меняются в A-notes. Переименование и перемещение файлов текстов не поддерживается; удалённый файл вызывает ошибку, а не тихое восстановление старого текста.
+    - Обзор.md, Папки/*.md и Встречи/*/_index.md создаются автоматически. Название, дата и папка меняются в Kinky Notes. Переименование и перемещение файлов текстов не поддерживается; удалённый файл вызывает ошибку, а не тихое восстановление старого текста.
     - Темы/ — страницы проектов, людей, понятий и выводов. Перед новой страницей ищите существующую; связывайте выводы с исходными встречами. Отделяйте факты от предположений.
-    - Архив/ — тексты удалённых в A-notes встреч. Аудио и служебная очередь остаются в Application Support/AntonNotes.
-    - Конфликты/ — версия A-notes при одновременном изменении одного текста. Версия Obsidian остаётся в исходном файле. Согласуйте тексты в обоих приложениях и повторите сохранение.
+    - Архив/ — тексты удалённых в Kinky Notes встреч. Аудио и служебная очередь остаются в Application Support/AntonNotes.
+    - Конфликты/ — версия Kinky Notes при одновременном изменении одного текста. Версия Obsidian остаётся в исходном файле. Согласуйте тексты в обоих приложениях и повторите сохранение.
 
     Произвольные страницы Obsidian не становятся встречами в приложении. Семантические связи и тематические теги добавляются вручную; приложение создаёт структурные связи и служебные теги. Интеграции с M.A.K.B нет.
     """ + "\n"
